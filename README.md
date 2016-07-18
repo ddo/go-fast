@@ -72,5 +72,4 @@ go test -v
 
 ## TODO
 
-* data race
 * send analytic info to fast.com
