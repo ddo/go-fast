@@ -244,7 +244,7 @@ func (f *Fast) Measure(urls []string, KbpsChan chan<- float64) (err error) {
 		ticker.Stop()
 
 		close(done)
-		close(byteLenChan)
+		// close(byteLenChan)
 		close(KbpsChan)
 
 		debug("stopped")
