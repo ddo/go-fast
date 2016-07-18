@@ -244,7 +244,7 @@ func (f *Fast) Measure(urls []string, KbpsChan chan<- float64) (err error) {
 		ticker.Stop()
 
 		close(done)
-		// close(byteLenChan)
+		close(byteLenChan)
 		close(KbpsChan)
 
 		debug("stopped")
@@ -294,6 +294,7 @@ func (f *Fast) Measure(urls []string, KbpsChan chan<- float64) (err error) {
 	var avgKbps float64 = 0
 
 	go func() {
+	loop:
 		for range ticker.C {
 			// byte = 8 bit
 			// 1 mega bit = 1,000 bit
@@ -301,11 +302,18 @@ func (f *Fast) Measure(urls []string, KbpsChan chan<- float64) (err error) {
 
 			secondPass++
 
-			muxByteLen.Lock()
-			avgKbps = float64(byteLen) / secondPass
-			muxByteLen.Unlock()
+			select {
 
-			KbpsChan <- avgKbps * 8 / 1000
+			case <-done:
+				break loop
+
+			default:
+				muxByteLen.Lock()
+				avgKbps = float64(byteLen) / secondPass
+				muxByteLen.Unlock()
+
+				KbpsChan <- avgKbps * 8 / 1000
+			}
 		}
 	}()
 
