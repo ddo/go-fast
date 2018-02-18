@@ -125,8 +125,8 @@ func (f *Fast) Init() (err error) {
 	debug("token", f.token)
 
 	// maxConnections:3
-	maxConnections := Between(jsStr, `maxConnections:`, `,`)
-
+	configStr := Between(jsStr, `defaultConfig=`, `;`)
+	maxConnections := Between(configStr, `maxConnections:`, `,`)
 	if maxConnections == "" {
 		err = errors.New("maxConnections not found")
 		debug("ERR(Between)", err)
