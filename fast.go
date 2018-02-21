@@ -3,196 +3,120 @@ package fast
 import (
 	"errors"
 	"io"
-	"io/ioutil"
 	"strconv"
 	"sync"
 	"time"
 
-	. "github.com/ddo/go-between"
 	"github.com/ddo/pick-json"
-	"gopkg.in/ddo/go-dlog.v1"
-	"gopkg.in/ddo/pick.v1"
-	"gopkg.in/ddo/request.v1"
+	"github.com/ddo/rq"
+	"github.com/ddo/rq/client"
+	"gopkg.in/ddo/go-dlog.v2"
 )
 
 const (
-	ENDPOINT = "https://fast.com"
+	endpoint = "https://fast.com"
 
-	BUFFER_SIZE = 512
+	bufferSize = 512
 
-	MEASURE_TIMEOUT_MAX = 30
-	MEASURE_TIMEOUT_MIN = 10
+	measureTimeoutMax = 30
+	measureTimeoutMin = 10
+
+	userAgent = "github.com/ddo/fast"
+)
+
+var (
+	errAPI      = errors.New("Fast.com API error. Please try again later")
+	errInternet = errors.New("Internet error. Please try again later")
 )
 
 var debug = dlog.New("fast", nil)
 
-var requestHeader = &request.Header{
-	"User-Agent": "github.com/ddo/fast",
-}
-
+// Fast contains client config
 type Fast struct {
 	token string
 
 	url      string
 	urlCount int
 
-	client *request.Client
+	client *client.Client
 }
 
-// create empty Fast instance with a http client
+// New creates empty Fast instance with a http client
 func New() *Fast {
+	// default client
+	defaultRq := rq.Get(endpoint)
+	defaultRq.Set("User-Agent", userAgent)
+
 	return &Fast{
-		client: request.New(),
+		client: client.New(&client.Option{
+			NoCookie:  true,
+			DefaultRq: defaultRq,
+		}),
 	}
 }
 
-// init token and url
+// Init inits token and url
 func (f *Fast) Init() (err error) {
-	debug()
-
-	////////////////////////// GET JS URL //////////////////////////
-	res, err := f.client.Request(&request.Option{
-		Url:    ENDPOINT,
-		Header: requestHeader,
-	})
-
+	data, err := getJSFile(f.client)
 	if err != nil {
-		debug("ERR(http)", err)
 		return
 	}
 
-	defer res.Body.Close()
-
-	srcArr := pick.PickAttr(&pick.Option{
-		PageSource: res.Body,
-		TagName:    "script",
-		Attr:       nil,
-	}, "src", 1)
-
-	if len(srcArr) == 0 {
-		err = errors.New("<script> src attr not found")
-		debug("ERR(PickAttr)", err)
-		return
-	}
-
-	jsUrl := srcArr[0]
-	debug("jsUrl", jsUrl)
-	////////////////////////// GET JS URL //////////////////////////
-
-	////////////////////////// URL & GET TOKEN & URLCOUNT //////////////////////////
-	resJs, err := f.client.Request(&request.Option{
-		Url:    ENDPOINT + jsUrl,
-		Header: requestHeader,
-	})
-
+	url, err := getAPIEndpoint(data)
 	if err != nil {
-		debug("ERR(http)", err)
 		return
 	}
-
-	defer resJs.Body.Close()
-
-	// read all js data
-	jsByteArr, err := ioutil.ReadAll(resJs.Body)
-
-	if err != nil {
-		debug("ERR(ReadAll)", err)
-		return
-	}
-
-	jsStr := string(jsByteArr)
-
-	// apiEndpoint="api.fast.com/netflix/speedtest"
-	url := Between(jsStr, `apiEndpoint="`, `"`)
-
-	if url == "" {
-		err = errors.New("token not found")
-		debug("ERR(Between)", err)
-	}
-
 	f.url = "https://" + url
-	debug("url", f.url)
 
-	// token:"YXNkZmFzZGxmbnNkYWZoYXNkZmhrYWxm"
-	token := Between(jsStr, `token:"`, `"`)
-
-	if token == "" {
-		err = errors.New("token not found")
-		debug("ERR(Between)", err)
-	}
-
-	f.token = token
-	debug("token", f.token)
-
-	// maxConnections:3
-	configStr := Between(jsStr, `defaultConfig=`, `;`)
-	maxConnections := Between(configStr, `maxConnections:`, `,`)
-	if maxConnections == "" {
-		err = errors.New("maxConnections not found")
-		debug("ERR(Between)", err)
-	}
-
-	urlCount, err := strconv.Atoi(maxConnections)
-
+	token, err := getToken(data)
 	if err != nil {
-		debug("ERR(Atoi)", err)
 		return
 	}
+	f.token = token
 
+	urlCount, err := getURLCount(data)
+	if err != nil {
+		return
+	}
 	f.urlCount = urlCount
-	debug("urlCount", f.urlCount)
-	////////////////////////// GET TOKEN & URLCOUNT //////////////////////////
 
 	return
 }
 
+// GetUrls gets the testing urls
 // call after #Init
 // recall if 403 err from download
 func (f *Fast) GetUrls() (urls []string, err error) {
-	debug()
+	r := rq.Get(f.url)
+	r.Qs("https", "true")
+	r.Qs("token", f.token)
+	r.Qs("urlCount", strconv.Itoa(f.urlCount))
 
-	res, err := f.client.Request(&request.Option{
-		Url: f.url,
-		Query: &request.Data{
-			"https":    []string{"true"},
-			"token":    []string{f.token},
-			"urlCount": []string{strconv.Itoa(f.urlCount)},
-		},
-		Header: requestHeader,
-	})
-
+	_, res, err := f.client.Send(r, false)
 	if err != nil {
-		debug("ERR(http)", err)
+		err = errInternet
 		return
 	}
-
 	defer res.Body.Close()
 
 	urls = pickjson.PickString(res.Body, "url", 0)
-
-	debug("urls", len(urls))
+	debug.Info("urls:", len(urls))
 	return
 }
 
 // download stop when eof
 // or done channel receive
 func (f *Fast) download(url string, byteLenChan chan<- int64, done <-chan struct{}) (err error) {
-	debug(url)
-
-	res, err := f.client.Request(&request.Option{
-		Url:    url,
-		Header: requestHeader,
-	})
-
+	r := rq.Get(url)
+	_, res, err := f.client.Send(r, false)
 	if err != nil {
-		debug("ERR(http)", err)
+		err = errInternet
 		return
 	}
-
 	defer res.Body.Close()
 
-	buf := make([]byte, BUFFER_SIZE)
-	length := 0
+	buf := make([]byte, bufferSize)
+	var length int
 
 	// read res.Body loop
 	// loop till <-done
@@ -202,7 +126,7 @@ loop:
 		select {
 
 		case <-done:
-			debug("<-done")
+			debug.Debug("<-done")
 			break loop
 
 		default:
@@ -214,24 +138,22 @@ loop:
 				// remove err
 				err = nil
 
-				debug("Read done")
+				debug.Debug("Read done")
 				break loop
 			}
-
 			if err != nil {
-				debug("ERR(Read)", err)
+				debug.Debug("Read", err)
 				break loop
 			}
 		}
 	}
 
-	debug("done")
+	debug.Done("done")
 	return
 }
 
+// Measure measures download speeds from given urls
 func (f *Fast) Measure(urls []string, KbpsChan chan<- float64) (err error) {
-	debug()
-
 	done := make(chan struct{})
 	byteLenChan := make(chan int64)
 
@@ -247,7 +169,7 @@ func (f *Fast) Measure(urls []string, KbpsChan chan<- float64) (err error) {
 		// close(byteLenChan)
 		close(KbpsChan)
 
-		debug("stopped")
+		debug.Info("stopped")
 	}
 
 	// sync
@@ -259,27 +181,27 @@ func (f *Fast) Measure(urls []string, KbpsChan chan<- float64) (err error) {
 
 	// timeout min
 	go func() {
-		<-time.After(MEASURE_TIMEOUT_MIN * time.Second)
+		<-time.After(measureTimeoutMin * time.Second)
 
 		muxTimeout.Lock()
 		isTimeout = true
 		muxTimeout.Unlock()
 
-		debug("timeout min", MEASURE_TIMEOUT_MIN)
+		debug.Info("timeout min", measureTimeoutMin)
 	}()
 	// timeout min
 
 	// timeout max
 	go func() {
-		<-time.After(MEASURE_TIMEOUT_MAX * time.Second)
+		<-time.After(measureTimeoutMax * time.Second)
 
 		once.Do(stop)
-		debug("timeout max", MEASURE_TIMEOUT_MAX)
+		debug.Info("timeout max", measureTimeoutMax)
 	}()
 	// timeout max
 
 	// get byte length from downloads
-	var byteLen int64 = 0
+	var byteLen int64
 
 	go func() {
 		for length := range byteLenChan {
@@ -290,8 +212,8 @@ func (f *Fast) Measure(urls []string, KbpsChan chan<- float64) (err error) {
 	}()
 
 	// measure per second
-	var secondPass float64 = 0 // should be int but to save time convert
-	var avgKbps float64 = 0
+	var secondPass float64 // should be int but to save time convert
+	var avgKbps float64
 
 	go func() {
 	loop:
@@ -327,11 +249,11 @@ func (f *Fast) Measure(urls []string, KbpsChan chan<- float64) (err error) {
 			for !timeout {
 				errDownload := f.download(urls[index], byteLenChan, done)
 
-				debug("download done index:", index)
+				debug.Info("download done index:", index)
 
 				// return on error
 				if errDownload != nil {
-					debug("ERR(download) index:", index)
+					debug.Error("download index:", index)
 
 					err = errDownload
 
@@ -350,6 +272,6 @@ func (f *Fast) Measure(urls []string, KbpsChan chan<- float64) (err error) {
 
 	<-done
 
-	debug("done")
+	debug.Done("done")
 	return
 }

@@ -7,27 +7,36 @@
 [semaphoreci-img]: https://semaphoreci.com/api/v1/ddo/go-fast/branches/master/badge.svg
 [semaphoreci-url]: https://semaphoreci.com/ddo/go-fast
 
-## installation
+This package is the API for https://github.com/ddo/fast
+
+> ``Fast``: Minimal zero-dependency utility for testing your internet download speed from terminal
+
+## Installation
 
 ```sh
 go get -u gopkg.in/ddo/go-fast.v0
 ```
 
-## example
+## Workflow
+
+* ``#New``
+* ``#Init``
+* ``#GetUrls``
+* ``#Measure``
+
+## Example
 
 ```go
 fastCom := fast.New()
 
 // init
 err := fastCom.Init()
-
 if err != nil {
     panic(err)
 }
 
 // get urls
 urls, err := fastCom.GetUrls()
-
 if err != nil {
     panic(err)
 }
@@ -44,32 +53,21 @@ go func() {
 }()
 
 err = fastCom.Measure(urls, KbpsChan)
-
 if err != nil {
     panic(err)
 }
 ```
 
-## debug
+## Debug
 
-to enable log set environment variable as
+> to enable log set environment variable as
 
-```go
+```sh
 DLOG=*
 ```
 
-or
+## Test
 
-```shell
-DLOG=* go run/test...
-```
-
-## test
-
-```shell
+```sh
 go test -v
 ```
-
-## TODO
-
-* send analytic info to fast.com
