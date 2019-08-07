@@ -49,7 +49,6 @@ func New() *Fast {
 
 	return &Fast{
 		client: client.New(&client.Option{
-			NoCookie:  true,
 			DefaultRq: defaultRq,
 		}),
 	}
