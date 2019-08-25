@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ddo/pick-json"
+	pickjson "github.com/ddo/pick-json"
 	"github.com/ddo/rq"
 	"github.com/ddo/rq/client"
 	"gopkg.in/ddo/go-dlog.v2"
@@ -215,6 +215,12 @@ func (f *Fast) Measure(urls []string, KbpsChan chan<- float64) (err error) {
 	var avgKbps float64
 
 	go func() {
+		defer func() {
+			if err := recover(); err != nil {
+				debug.Error("goroutine paniced during measurement: ")
+				debug.Error(err)
+			}
+		}()
 	loop:
 		for range ticker.C {
 			// byte = 8 bit
